@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-ready-ai"
+version = "0.1.0"
+description = "Turn a local video into a complete YouTube transcript, captions, chapters, description, and title suggestions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+dependencies = [
+    "click>=8.1",
+    "faster-whisper>=1.0",
+    "ollama>=0.3",
+    "pydantic>=2.6",
+    "Pillow>=10.0",
+]
+
+[project.scripts]
+youtube-ready = "youtube_ready.cli:main"
+youtube-ready-web = "youtube_ready.web.server:cli_main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+mlx = [
+    "mlx-lm>=0.19; sys_platform == 'darwin'",
+    "mlx-vlm>=0.1; sys_platform == 'darwin'",
+    "huggingface-hub>=0.23",
+]
+thumbnails = [
+    # Plain opencv-python, not the headless variant: mlx-vlm (the "mlx" extra) already
+    # depends on opencv-python, and installing both opencv-python and opencv-python-headless
+    # in the same environment clobbers each other's shared libraries and breaks cv2 entirely.
+    # Pinned below 5.0: the 5.0.0 wheel ships without the CascadeClassifier (face detection)
+    # binding at all, so face-aware thumbnail scoring silently stops working on it.
+    "opencv-python>=4.9,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_ready"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

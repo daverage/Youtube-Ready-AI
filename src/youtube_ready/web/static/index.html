@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>youtube-ready</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="1" y="4" width="22" height="16" rx="4" fill="url(#g)" />
+          <path d="M10 8.5l6 3.5-6 3.5v-7z" fill="white" />
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="24" y2="24">
+              <stop offset="0" stop-color="#ff5f6d" />
+              <stop offset="1" stop-color="#a855f7" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div>
+          <div class="brand-title">youtube&#8209;ready</div>
+          <div class="brand-sub">Local video &rarr; complete publishing pack</div>
+        </div>
+      </div>
+      <span class="badge" id="version-badge">local &middot; offline</span>
+      <button class="ghost-btn small" id="branding-btn" type="button">Branding</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel" id="upload-panel">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose a video file">
+          <input type="file" id="file-input" accept="video/*" hidden />
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" class="dropzone-icon">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <p class="dropzone-title">Drop a video, or click to browse</p>
+          <p class="dropzone-sub" id="file-name">MP4, MOV, MKV, WAV &mdash; stays on this machine</p>
+        </div>
+
+        <div class="options">
+          <div class="field">
+            <label for="quality">Quality</label>
+            <select id="quality">
+              <option value="fast">Fast (tiny model)</option>
+              <option value="balanced" selected>Balanced (small model)</option>
+              <option value="accurate">Accurate (medium model)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="language">Language <span class="hint">optional</span></label>
+            <input id="language" type="text" placeholder="auto-detect (e.g. en)" />
+          </div>
+          <div class="field field-row">
+            <label class="switch">
+              <input type="checkbox" id="translate" />
+              <span class="slider"></span>
+              <span class="switch-label">Translate to English</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="ai" checked />
+              <span class="slider"></span>
+              <span class="switch-label">AI chapters &amp; metadata</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="thumbnails" checked />
+              <span class="slider"></span>
+              <span class="switch-label">Thumbnail ideas</span>
+            </label>
+          </div>
+          <div class="field" id="backend-field">
+            <label for="metadata-backend">AI runtime</label>
+            <select id="metadata-backend">
+              <option value="ollama" selected>Ollama</option>
+              <option value="mlx">MLX (Apple Silicon)</option>
+            </select>
+          </div>
+          <div class="field" id="model-field">
+            <label for="metadata-model-select">Model <span class="hint" id="model-hint"></span></label>
+            <select id="metadata-model-select">
+              <option value="">Loading models&hellip;</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="context">Context <span class="hint">optional</span></label>
+            <input id="context" type="text" placeholder="Topic or audience" />
+          </div>
+          <div class="field">
+            <label for="output-root">Output folder</label>
+            <input id="output-root" type="text" value="youtube-ready-output" />
+          </div>
+        </div>
+
+        <button id="start-btn" class="primary-btn" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+          Generate publishing pack
+        </button>
+      </section>
+
+      <section class="panel" id="sessions-panel" hidden>
+        <div class="sessions-header">
+          <h2>Previous sessions</h2>
+          <p class="results-sub">Reopen or delete publishing packs you've already generated in this output folder.</p>
+        </div>
+        <ul class="session-list" id="session-list"></ul>
+      </section>
+
+      <section class="panel" id="progress-panel" hidden>
+        <div class="progress-header">
+          <div class="spinner" id="spinner"></div>
+          <div>
+            <div class="progress-title" id="progress-title" aria-live="polite">Working&hellip;</div>
+            <div class="progress-sub" id="progress-sub">This can take a few minutes for longer videos.</div>
+          </div>
+        </div>
+        <ol class="log" id="log" aria-live="polite"></ol>
+        <button id="reset-btn" class="ghost-btn" hidden>Start another video</button>
+      </section>
+
+      <section class="panel" id="results-panel" hidden>
+        <div class="results-header">
+          <h2>Publishing pack ready</h2>
+          <p class="results-sub" id="results-path"></p>
+        </div>
+        <div class="tabs" id="tabs"></div>
+        <div class="tab-content">
+          <div class="tab-toolbar">
+            <button class="ghost-btn small" id="copy-btn">Copy</button>
+            <a class="ghost-btn small" id="download-btn" download>Download file</a>
+          </div>
+          <pre class="viewer" id="viewer"></pre>
+
+          <div class="thumbnail-studio" id="thumbnail-studio" hidden>
+            <div class="studio-toolbar">
+              <p class="results-sub" id="studio-provenance"></p>
+              <a class="ghost-btn small" id="studio-download-all">Download all</a>
+            </div>
+            <div class="studio-switcher" id="studio-switcher"></div>
+            <div class="studio-editor" id="studio-editor"></div>
+          </div>
+
+          <div class="preview-editor" id="preview-editor" hidden>
+            <div class="preview-video-wrap">
+              <video id="preview-video" controls playsinline></video>
+            </div>
+
+            <div class="editor-toolbar">
+              <button class="ghost-btn small" id="save-transcript-btn">Save subtitle edits</button>
+              <button class="ghost-btn small" id="apply-dict-btn">Apply custom dictionary to this video</button>
+              <span class="hint" id="editor-status" aria-live="polite"></span>
+            </div>
+
+            <ol class="cue-list" id="cue-list"></ol>
+
+            <div class="dictionary-panel">
+              <h3>Custom spellings &amp; words</h3>
+              <p class="results-sub">Corrections here apply automatically to every future transcription, and can be re-applied to this one.</p>
+              <form class="dictionary-form" id="dictionary-form">
+                <input type="text" id="dict-wrong" placeholder="Whisper heard&hellip; (e.g. jiraffe)" required />
+                <span>&rarr;</span>
+                <input type="text" id="dict-right" placeholder="Correct spelling (e.g. Giraffe)" required />
+                <button type="submit" class="ghost-btn small">Add</button>
+              </form>
+              <div class="dictionary-offer" id="dictionary-offer" hidden aria-live="polite">
+                <span id="dictionary-offer-text"></span>
+                <button type="button" class="ghost-btn small" id="dictionary-offer-yes">Replace &amp; save</button>
+                <button type="button" class="ghost-btn small" id="dictionary-offer-no">Skip</button>
+              </div>
+              <ul class="dictionary-list" id="dictionary-list"></ul>
+            </div>
+          </div>
+        </div>
+        <button id="reset-btn-2" class="ghost-btn">Start another video</button>
+      </section>
+
+      <section class="panel error-panel" id="error-panel" hidden role="alert" aria-live="assertive">
+        <h2>Something went wrong</h2>
+        <p id="error-message"></p>
+        <button id="reset-btn-3" class="ghost-btn">Try again</button>
+      </section>
+    </main>
+
+    <footer class="foot">
+      Runs entirely on this machine &mdash; no video or transcript leaves your computer.
+    </footer>
+
+    <div class="modal-backdrop" id="confirm-backdrop" hidden>
+      <div class="modal" id="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+        <h2 id="confirm-title">Confirm</h2>
+        <p class="results-sub" id="confirm-message"></p>
+        <div class="field" id="confirm-input-field" hidden>
+          <label for="confirm-input" id="confirm-input-label">Note</label>
+          <input type="text" id="confirm-input" />
+        </div>
+        <div class="editor-toolbar">
+          <button class="ghost-btn small" id="confirm-cancel-btn" type="button">Cancel</button>
+          <button class="primary-btn small" id="confirm-ok-btn" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="branding-backdrop" hidden>
+      <div class="modal" id="branding-modal" role="dialog" aria-modal="true" aria-labelledby="branding-modal-title">
+        <h2 id="branding-modal-title">Channel branding preset</h2>
+        <p class="results-sub">Optional &mdash; used to color placeholder thumbnails, stamp a logo, and flag prohibited phrases. Thumbnails work fine without this.</p>
+        <div class="options">
+          <div class="field">
+            <label for="brand-channel-name">Channel name</label>
+            <input id="brand-channel-name" type="text" />
+          </div>
+          <div class="field">
+            <label for="brand-audience">Audience</label>
+            <input id="brand-audience" type="text" placeholder="e.g. home cooks, indie devs" />
+          </div>
+          <div class="field">
+            <label for="brand-tone">Tone</label>
+            <input id="brand-tone" type="text" placeholder="e.g. calm and precise, high-energy" />
+          </div>
+          <div class="field field-row">
+            <label for="brand-primary-color">Primary color</label>
+            <input id="brand-primary-color" type="color" value="#111318" />
+            <label for="brand-accent-color">Accent color</label>
+            <input id="brand-accent-color" type="color" value="#ffffff" />
+          </div>
+          <div class="field">
+            <label for="brand-emphasis">Emphasis</label>
+            <select id="brand-emphasis">
+              <option value="balanced">Balanced</option>
+              <option value="presenter">Presenter-led</option>
+              <option value="product">Product-led</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="brand-text-density">Text density</label>
+            <select id="brand-text-density">
+              <option value="minimal">Minimal</option>
+              <option value="balanced">Balanced</option>
+              <option value="bold">Bold</option>
+            </select>
+          </div>
+          <div class="field field-wide">
+            <label for="brand-font-input">Font <span class="hint">used for overlay text on renders &mdash; type to filter</span></label>
+            <div class="combo-row">
+              <input id="brand-font-input" type="text" placeholder="Start typing a font name…" list="brand-font-list" autocomplete="off" />
+              <datalist id="brand-font-list"></datalist>
+              <label class="ghost-btn small file-btn">
+                + Add font
+                <input id="brand-font-upload" type="file" accept=".ttf,.otf,.ttc" hidden />
+              </label>
+            </div>
+            <span class="hint" id="brand-font-status"></span>
+          </div>
+          <div class="field field-wide">
+            <label for="brand-logo-upload">Logo <span class="hint">optional, shown top-right on renders</span></label>
+            <div class="combo-row">
+              <div class="logo-preview" id="brand-logo-preview">
+                <img id="brand-logo-img" alt="" hidden />
+                <span id="brand-logo-empty">None</span>
+              </div>
+              <label class="ghost-btn small file-btn">
+                Choose image
+                <input id="brand-logo-upload" type="file" accept="image/*" hidden />
+              </label>
+              <button type="button" class="ghost-btn small danger" id="brand-logo-remove" hidden>Remove</button>
+            </div>
+            <span class="hint" id="brand-logo-status"></span>
+          </div>
+          <div class="field">
+            <label for="brand-prohibited">Prohibited phrases <span class="hint">one per line</span></label>
+            <textarea id="brand-prohibited" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="editor-toolbar">
+          <button class="ghost-btn small" id="branding-cancel">Close</button>
+          <button class="primary-btn small" id="branding-save">Save</button>
+          <span class="hint" id="branding-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

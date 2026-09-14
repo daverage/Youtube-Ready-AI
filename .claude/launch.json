@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "youtube-ready-web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "source .venv/bin/activate && youtube-ready-web --no-open-browser"],
+      "port": 8787
+    }
+  ]
+}
