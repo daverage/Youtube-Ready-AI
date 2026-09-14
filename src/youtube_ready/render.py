@@ -153,6 +153,22 @@ def _draw_logo(image, branding: BrandingProfile | None) -> None:
         return
 
 
+def resolve_frame_path(frame_path: str | None, output_path: Path) -> Path | None:
+    """`frame_path` is an absolute path baked in when the frame was extracted. If the
+    project/output folder has since been moved or renamed (or a session was reopened
+    from a relocated output directory), that absolute path no longer exists — fall
+    back to the same filename inside the current thumbnails directory (the frame
+    itself always lives alongside the file we're about to render, `output_path`'s
+    parent) instead of silently rendering a blank placeholder."""
+    if not frame_path:
+        return None
+    candidate = Path(frame_path)
+    if candidate.is_file():
+        return candidate
+    fallback = output_path.parent / candidate.name
+    return fallback if fallback.is_file() else candidate
+
+
 def render_variant(
     variant: ThumbnailVariant, output_path: Path, *, branding: BrandingProfile | None = None
 ) -> str | None:
@@ -172,8 +188,8 @@ def render_variant(
     font_path = resolve_font_path(branding)
 
     canvas = None
-    frame_path = variant.frame_path
-    if frame_path and Path(frame_path).is_file():
+    frame_path = resolve_frame_path(variant.frame_path, output_path)
+    if frame_path and frame_path.is_file():
         try:
             with Image.open(frame_path) as source:
                 source = source.convert("RGB")

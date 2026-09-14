@@ -1,178 +1,494 @@
-# Thumbnail Packaging Studio — Work Package
+Yes. The code should move from thumbnail generation to a small thumbnail assistant workflow.
 
-## Objective
+Right now the system mostly does this:
 
-Replace the current advisory thumbnail cards with three coherent, editable, upload-ready title–thumbnail packages. Each package must connect one title, one visually verified frame, complementary overlay text, and a rendered 16:9 image. The workflow must remain local-first and degrade gracefully when local AI, vision models, FFmpeg, or OpenCV are unavailable.
+> choose frame → choose overlay → render/export
 
-## Current-State Problem
+What you actually want is:
 
-The pipeline passes all generated titles to thumbnail generation, but `ThumbnailIdea` does not record which title an idea supports. The text model receives timestamps and nearby transcript content without seeing the candidate frames, so visual descriptions can disagree with the selected image. Frame ranking emphasizes sharpness and face presence rather than subject relevance or composition. The web UI displays overlay text beneath an unedited 640×360 still instead of producing a finished thumbnail.
+> assess available assets → identify what is missing → advise user → let them add better assets if they have them → build a modern composition → fall back gracefully if they do not
 
-## Product Outcomes
+That is a much better product.
 
-- Generate three meaningfully different packages: search-led, browse-led, and outcome/stakes-led.
-- Make the title and thumbnail complementary rather than repetitive.
-- Preview the actual crop, overlay, and branding at desktop and small/mobile sizes.
-- Allow creators to change the title, frame, crop, overlay, and text placement.
-- Export three high-resolution images suitable for YouTube title-and-thumbnail testing.
-- Preserve truthful packaging by checking concepts against transcript evidence and unsupported-claim constraints.
+## I would add an Asset Readiness stage
 
-## Scope
+Before generating the final thumbnail, assess what you currently have:
 
-### 1. Shared Packaging Brief
-
-Promote the existing `PackagingBrief` into reusable pipeline data instead of discarding it after metadata generation. Persist it in `youtube_metadata.json` or a versioned `packaging.json`. Thumbnail generation must consume its target viewer, payoff, claim, result, contrasts, proof points, visual subjects, search phrases, and `must_not_imply` values.
-
-Affected areas: `metadata.py`, `models.py`, `pipeline.py`, session loading in `web/jobs.py`.
-
-### 2. Title–Thumbnail Variant Model
-
-Replace or evolve `ThumbnailIdea` into a versioned `ThumbnailVariant` containing:
-
-- stable variant ID and strategy (`search`, `browse`, or `outcome`)
-- selected title and optional title-suggestion ID
-- frame timestamp and source path
-- overlay text
-- visual rationale and audience promise
-- normalized crop/focal-point coordinates
-- text position, alignment, style, and safe margins
-- rendered image filename
-- model/backend provenance and fallback notes
-
-Continue reading legacy `thumbnail_ideas.json` files so previous sessions remain loadable.
-
-### 3. Candidate Frame Pipeline
-
-- Extract candidates across the full runtime rather than stopping at the earliest scene changes.
-- Include scene changes, evenly distributed samples, chapter boundaries, demonstrations, and conclusion/result moments.
-- Extract master frames at a minimum of 1280×720 while retaining lightweight previews for the UI.
-- Detect duplicates, blur, closed or awkward eyes where practical, face/object cropping, and usable negative space.
-- Keep roughly 20–30 candidates and shortlist 8–12 diverse frames.
-- Allow a creator to upload a dedicated thumbnail photograph or select another point from the video.
-
-### 4. Optional Visual Analysis
-
-Introduce a dedicated image-analysis interface; do not overload the text-only metadata backend. When a compatible local vision model is available, describe concrete visible subjects, composition, expression, product visibility, and text-safe space for each shortlisted frame. Match title hypotheses to these visual facts.
-
-Without a vision model, use technical scoring plus transcript context, label the result as unverified, and keep manual frame selection fully functional. Never fabricate visible details.
-
-### 5. Variant Planning and Validation
-
-Generate exactly one initial variant per title strategy. Each overlay should add information, evidence, tension, or outcome without copying the title. Validate:
-
-- title and overlay length limits
-- duplication between title and overlay
-- conflicts with `must_not_imply`
-- unsupported claims or visual descriptions
-- whether the opening 30–60 seconds begins delivering the package promise
-- presence of a valid frame and renderable crop
-
-Warnings should be visible but should not prevent manual export unless the package is technically invalid.
-
-### 6. Deterministic Rendering
-
-Add a shared Python renderer so CLI and web outputs are identical. Render 1280×720 JPEG or PNG files with deterministic crop, type scale, wrapping, contrast treatment, and safe margins. Bundle an appropriately licensed default font or document a reliable packaged alternative. Keep rendered text out of optional image-generation prompts.
-
-Write outputs such as:
-
-```text
-thumbnails/
-  candidates/
-  variant-search.jpg
-  variant-browse.jpg
-  variant-outcome.jpg
-thumbnail_variants.json
+```json
+{
+  "frame_quality": "good",
+  "product_visibility": "medium",
+  "person_visibility": "good",
+  "background_clutter": "high",
+  "negative_space": "poor",
+  "cutout_potential": "good",
+  "missing_assets": [
+    "clean product image",
+    "larger presenter cutout"
+  ],
+  "recommended_uploads": [
+    {
+      "type": "product_cutout",
+      "reason": "Would allow the product to become the dominant visual anchor"
+    },
+    {
+      "type": "presenter_cutout",
+      "reason": "Would allow a cleaner modern split composition"
+    }
+  ]
+}
 ```
 
-### 7. Web Thumbnail Studio
+Then the UI can say something useful instead of silently making the best of a mediocre frame.
 
-Replace the read-only gallery with an editor that supports:
+For example:
 
-- three side-by-side package tabs/cards
-- editable title and overlay fields
-- candidate-frame strip and uploaded-image selection
-- crop/zoom and focal-point controls
-- text position and basic brand styling
-- large canvas plus small-size legibility preview
-- regenerate overlay, regenerate package, and lock-field actions
-- download one image or all variants
-- visible warnings and AI/fallback provenance
+> **You can make this stronger**
+>
+> The current frame is usable, but the product is relatively small and the background is busy.
+>
+> If available, upload:
+>
+> * a clean product photo or cut-out
+> * a larger cut-out photo of yourself
+>
+> These are optional. We can still build a thumbnail from the video frame.
 
-Automatic generation must still complete without requiring an interactive pause. Edits and rendered files must survive session reloads.
+That is exactly the right balance.
 
-### 8. Branding Presets
+## Give the user three levels of freedom
 
-Support an optional reusable local profile containing channel name, audience, tone, fonts, colours, logo, preferred text density, presenter/product emphasis, and prohibited phrases. Ship a neutral default. Branding is an enhancement, not a prerequisite for generating thumbnails.
+I would structure it as:
 
-## Delivery Plan
+### 1. Use video only
 
-### Milestone 1 — Data and Coherence
+No extra work.
 
-- Persist `PackagingBrief`.
-- Add the versioned variant schema and legacy loader.
-- Pair each title with one thumbnail strategy.
-- Pass shared evidence and constraints into variant generation.
+The app:
 
-### Milestone 2 — Frame Quality
+* selects the best frame
+* crops aggressively
+* enlarges important subjects
+* darkens/blurs clutter
+* adds text only where needed
+* produces the strongest possible thumbnail from the source footage
 
-- Upgrade full-runtime extraction and master resolution.
-- Improve duplicate and composition scoring.
-- Add optional visual analysis and explicit unverified fallback state.
+### 2. Improve with optional assets
 
-### Milestone 3 — Rendering
+The app suggests assets based on the weaknesses it detects.
 
-- Implement deterministic cropping and text rendering.
-- Produce three finished images from the CLI pipeline.
-- Add promise/claim validation and warnings.
+Possible uploads:
 
-### Milestone 4 — Editor and Export
+* product photo
+* product PNG/cut-out
+* presenter headshot
+* presenter cut-out
+* logo
+* before image
+* after image
+* screenshot
+* chart/result image
+* alternative frame/photo
 
-- Build the web thumbnail studio.
-- Add update/render/download API routes.
-- Persist edits and support dedicated image uploads.
+The important point is: **don't just show a generic upload box**.
 
-### Milestone 5 — Branding and Feedback
+Tell the user why each asset would help.
 
-- Add local branding presets.
-- Record the selected variant and optional YouTube test result for future channel-level guidance.
+For your XVive example:
 
-## Acceptance Criteria
+> A clean cut-out of the U45 would let us make the product 2–3× larger without losing image quality.
 
-- Every AI-generated variant identifies exactly one title, one frame, and one strategy.
-- Three visually and rhetorically distinct variants are generated when sufficient titles and frames exist.
-- Every automatic variant produces a 1280×720-or-higher image with readable, non-clipped text.
-- The selected frame's visual description is based on image evidence when vision analysis is enabled.
-- No-AI and failed-AI runs still return editable, renderable variants.
-- Titles and overlays do not merely duplicate one another.
-- Unsupported-claim and opening-promise checks produce actionable warnings.
-- Users can edit, rerender, download, close, and reopen a session without losing changes.
-- Existing sessions using `thumbnail_ideas.json` continue to load.
-- Source video files remain untouched and no media is uploaded.
+That's actionable.
 
-## Test Plan
+### 3. Advanced/manual
 
-- Unit-test variant validation, title/overlay deduplication, crop bounds, safe text layout, frame distribution, and legacy migration.
-- Test the heuristic path, model failure, missing FFmpeg/OpenCV/vision model, missing frames, short videos, portrait source video, and long videos.
-- Assert rendered dimensions, output filenames, non-empty images, and deterministic results for fixed inputs.
-- Add pipeline tests confirming the packaging brief reaches thumbnail generation and all three rendered files are included in the publishing package.
-- Add FastAPI tests for editing, rerendering, uploads, downloads, path traversal protection, and session reload.
-- Manually verify large and small previews with presenter-led, product-led, screen-recording, and no-face videos.
+Let the user override:
 
-## Risks and Guardrails
+* main subject
+* secondary subject
+* overlay text
+* text/no text
+* person yes/no
+* selected frame
+* uploaded asset
+* layout
+* crop
+* title pairing
+* style intensity
 
-- Vision-model availability varies: preserve a clear manual and heuristic path.
-- Font metrics and image rendering can differ by platform: package fonts and use one renderer.
-- Additional frame extraction increases runtime and storage: cap candidates and delete superseded previews safely.
-- Previous session schemas must remain readable through explicit versioning/migration.
-- Avoid false performance scores; only real YouTube test results should be treated as evidence of effectiveness.
+But keep this optional.
 
-## Out of Scope
+Most users shouldn't need to become graphic designers.
 
-- Uploading videos or thumbnails to YouTube.
-- Cloud image generation or mandatory external APIs.
-- Predicting click-through rate with an unsupported synthetic score.
-- Automatically changing published videos based on analytics.
+---
 
-## Definition of Done
+# The app should diagnose the thumbnail
 
-The feature is complete when a local CLI or web run reliably produces three truthful, paired title–thumbnail packages; the web app can edit and persist them; each package exports as a high-resolution image; fallback behavior remains usable offline; and the full automated test suite passes.
+This is probably more valuable than generating three random variants.
+
+For each candidate thumbnail, provide a small critique:
+
+```text
+Strengths
+✓ Product is recognisable
+✓ Text remains readable on mobile
+✓ Human presence supports trust
+
+Weaknesses
+⚠ Product is too small
+⚠ Background competes for attention
+⚠ Text band covers the main object
+
+Best improvement
+Upload a clean product image or use a tighter product shot.
+```
+
+That immediately teaches the user what makes a competent thumbnail.
+
+You could score:
+
+* subject clarity
+* visual hierarchy
+* product prominence
+* human prominence
+* clutter
+* text readability
+* text quantity
+* title overlap
+* negative space
+* mobile legibility
+* authenticity
+* curiosity/value
+* overall thumbnail potential
+
+Not as an absolute performance prediction, just as design diagnostics.
+
+---
+
+# Add a Thumbnail Plan before rendering
+
+The model should produce a layout plan rather than jumping straight to an image prompt.
+
+Something like:
+
+```json
+{
+  "strategy": "browse",
+  "visual_anchor": "XVive U45 receiver",
+  "secondary_anchor": "presenter",
+  "layout": "presenter_left_product_right",
+  "background_treatment": "blur_and_darken",
+  "product_scale": "large",
+  "person_scale": "medium",
+  "overlay_text": "GOOD ENOUGH TO GIG?",
+  "text_position": "upper_left",
+  "text_treatment": "large_bold_high_contrast",
+  "remove_or_suppress": [
+    "shelf",
+    "monitor",
+    "small background pedals"
+  ]
+}
+```
+
+Now the thumbnail renderer has actual composition instructions.
+
+That is much more modern than:
+
+> use a sharp frame with high contrast.
+
+---
+
+# Image uploads should be contextual
+
+I wouldn't say:
+
+> Upload more images
+
+I'd give specific prompts based on the current composition.
+
+For example:
+
+### Product too small
+
+> **Optional improvement: upload a product image**
+>
+> A clean product shot or transparent PNG would let us enlarge the product without making the frame soft.
+
+### Presenter weak
+
+> **Optional improvement: upload a better photo of yourself**
+>
+> A waist-up or head-and-shoulders image with clear separation from the background would give the thumbnail a stronger human focal point.
+
+### Poor result imagery
+
+> **Optional improvement: upload the result**
+>
+> If the video has a before/after, final result, graph, screenshot or finished object that isn't clearly visible in the footage, upload it here.
+
+That makes the assistant genuinely useful.
+
+---
+
+# Allow arbitrary supporting assets
+
+Don't tie this only to products and faces.
+
+The system should categorise uploaded images as things like:
+
+```text
+person
+product
+before
+after
+result
+screenshot
+document
+chart
+logo
+environment
+other
+```
+
+Then the model chooses what is useful.
+
+That keeps it generic across:
+
+* tutorials
+* reviews
+* cooking
+* software
+* DIY
+* gaming
+* music
+* news
+* personal stories
+* business
+* educational content
+
+---
+
+# Add a modernity/composition layer
+
+This is where I'd give the generator considerably more freedom.
+
+The generated thumbnail should be allowed to:
+
+* crop heavily
+* reposition subjects
+* isolate a person/product
+* enlarge an object beyond its original size
+* remove distracting background objects
+* simplify or blur backgrounds
+* introduce subtle gradients
+* create depth between foreground/background
+* move subjects to improve composition
+* add shadows/strokes
+* adjust exposure and contrast
+* use uploaded cut-outs
+* combine two source assets
+
+But it should **not** be allowed to:
+
+* invent a different product
+* alter branding
+* falsify results
+* fabricate a reaction
+* make someone look emotionally different
+* create unsupported before/after states
+
+That distinction is important.
+
+I would encode it as:
+
+> **Editorial transformation allowed; factual transformation prohibited.**
+
+---
+
+# A fallback ladder would make the system much stronger
+
+I'd explicitly rank available options:
+
+```text
+A. Best:
+uploaded product/person/result assets + selected video frame
+
+B. Good:
+clean uploaded asset + video frame
+
+C. Acceptable:
+single strong video frame, aggressively recomposed
+
+D. Last resort:
+clean crop of the best available frame with minimal/no text
+```
+
+If no extra assets exist, the app should not nag the user.
+
+It should just say:
+
+> No extra assets available. We'll optimise the strongest video frame.
+
+Then proceed.
+
+---
+
+# Let the app ask one useful question
+
+After analysing everything, it could show something like:
+
+> **Best current concept**
+> Product-led thumbnail with you as the secondary anchor.
+>
+> **Optional improvement**
+> A clean U45 product image would materially improve this composition.
+>
+> [Upload product image]
+> [Upload presenter image]
+> [Use what I have]
+
+That's enough.
+
+I would avoid turning this into a questionnaire.
+
+---
+
+# I'd also add a User Intent control
+
+Something simple:
+
+```text
+Thumbnail style
+
+○ Clear & informative
+○ Balanced
+○ Bold / browse-first
+```
+
+Not dozens of presets.
+
+This determines how far the app pushes:
+
+* crop
+* contrast
+* text size
+* subject enlargement
+* visual tension
+
+You could map that to:
+
+```text
+clear
+balanced
+bold
+```
+
+The factual rules remain unchanged.
+
+---
+
+# The generated advice itself should be saved
+
+Each thumbnail package should include:
+
+```json
+{
+  "advice": {
+    "overall": "...",
+    "strengths": [],
+    "weaknesses": [],
+    "recommended_uploads": [],
+    "highest_value_change": "..."
+  }
+}
+```
+
+Then the UI can show an expandable:
+
+> Why this thumbnail?
+
+and
+
+> How to improve it
+
+That adds real value beyond image generation.
+
+---
+
+# I would change the core schema
+
+Something like this:
+
+```json
+{
+  "strategy": "browse",
+  "title": "...",
+
+  "assessment": {
+    "strengths": [],
+    "weaknesses": [],
+    "thumbnail_potential": 0.78
+  },
+
+  "asset_recommendations": [
+    {
+      "type": "product_cutout",
+      "priority": "high",
+      "reason": "..."
+    }
+  ],
+
+  "composition": {
+    "primary_subject": "...",
+    "secondary_subject": "...",
+    "layout": "...",
+    "crop_instruction": "...",
+    "background_treatment": "...",
+    "overlay_text": "...",
+    "text_position": "...",
+    "remove_or_suppress": []
+  },
+
+  "source_assets": {
+    "frame": "...",
+    "uploaded_assets": []
+  },
+
+  "edit_prompt": "...",
+
+  "fallback_plan": "..."
+}
+```
+
+That gives you room to grow without changing the basic workflow later.
+
+## The UX I'd aim for
+
+For each title strategy:
+
+> **Curiosity / Browse**
+>
+> **GOOD ENOUGH TO GIG?**
+>
+> [thumbnail preview]
+>
+> **Why this works**
+> The XVive unit is the visual anchor while the question adds live-performance stakes not already stated in the title.
+>
+> **Current limitations**
+> The product is relatively small and the shelving adds background clutter.
+>
+> **Best improvement**
+> Upload a clean product photo or transparent PNG.
+>
+> `[Upload product]` `[Upload person]` `[Choose another frame]`
+> `[Use current assets]`
+>
+> **Source frame:** `[View] [Download]`
+>
+> **Edit prompt:** `[Copy]`
+
+That feels like a proper thumbnail assistant rather than a thumbnail randomiser.
+
+And crucially, the user who has nothing else available still gets a result immediately. The user who has better assets gets the opportunity to make something substantially better.

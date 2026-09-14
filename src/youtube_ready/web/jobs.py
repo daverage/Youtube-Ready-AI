@@ -22,7 +22,7 @@ from youtube_ready.models import (
     Transcript,
 )
 from youtube_ready.pipeline import PipelineResult, run_pipeline
-from youtube_ready.render import render_variant
+from youtube_ready.render import compute_crop_box, render_variant, resolve_frame_path
 from youtube_ready.thumbnails import (
     generate_thumbnail_variants,
     migrate_legacy_package,
@@ -361,12 +361,12 @@ def update_thumbnail_variant(job: Job, variant_id: str, updates: dict) -> Thumbn
     zoom = updates.get("zoom")
     if "focal_x" in updates or "focal_y" in updates or zoom is not None:
         variant.focal_x, variant.focal_y = float(focal_x), float(focal_y)
-        if zoom is not None and variant.frame_path and Path(variant.frame_path).is_file():
+        output_path = job.result.output_dir / "thumbnails" / f"variant-{variant.strategy}.jpg"
+        resolved_frame_path = resolve_frame_path(variant.frame_path, output_path)
+        if zoom is not None and resolved_frame_path and resolved_frame_path.is_file():
             from PIL import Image
 
-            from youtube_ready.render import compute_crop_box
-
-            with Image.open(variant.frame_path) as image:
+            with Image.open(resolved_frame_path) as image:
                 variant.crop = compute_crop_box(image.size, variant.focal_x, variant.focal_y, float(zoom))
         else:
             variant.crop = CropBox()
