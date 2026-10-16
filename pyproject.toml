@@ -32,8 +32,8 @@ web = [
     "python-multipart>=0.0.9",
 ]
 mlx = [
-    "mlx-lm>=0.19; sys_platform == 'darwin'",
-    "mlx-vlm>=0.1; sys_platform == 'darwin'",
+    "mlx-lm>=0.19; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-vlm>=0.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "huggingface-hub>=0.23",
 ]
 thumbnails = [

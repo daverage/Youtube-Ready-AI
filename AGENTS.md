@@ -29,4 +29,4 @@ Use pytest and name files `test_<module>.py` and functions `test_<behavior>`. Mo
 
 ## Commit & Pull Request Guidelines
 
-Git history is unavailable in this checkout. Use concise, imperative commit subjects, such as `Handle missing thumbnail frames`, and keep each commit focused. Pull requests should explain user-visible effects, list tests run, link relevant issues, and include screenshots for web UI changes. Call out dependency or fallback-behavior changes explicitly.
+Follow the existing history: concise, imperative commit subjects, such as `Handle missing thumbnail frames`, with each commit focused. Pull requests should explain user-visible effects, list tests run, link relevant issues, and include screenshots for web UI changes. Call out dependency or fallback-behavior changes explicitly.

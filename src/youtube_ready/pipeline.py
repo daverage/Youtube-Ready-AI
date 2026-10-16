@@ -90,8 +90,10 @@ def run_pipeline(
     metadata_model: str | None = "qwen2.5:7b-instruct",
     metadata_backend: str = "ollama",
     context: str | None = None,
-    thumbnails: bool = True,
+    thumbnails: bool = False,
+    thumbnail_style_intent: str = "balanced",
     on_progress: Callable[[str], None] | None = None,
+    on_thumbnail_plan: Callable[[PipelineResult], None] | None = None,
 ) -> PipelineResult:
     progress = on_progress or (lambda _message: None)
     video_path = Path(input_path).expanduser().resolve()
@@ -112,11 +114,13 @@ def run_pipeline(
     write_transcript_outputs(output_dir, transcript)
 
     progress("Analysing the video and generating titles, description, hashtags, and chapters")
+    branding = load_branding_profile()
     metadata = generate_metadata(
         transcript,
         model=metadata_model,
         context=context,
         backend=metadata_backend,
+        channel_name=branding.channel_name,
     )
     chapters_text = render_chapters(metadata.chapters)
     description = metadata.description.strip()
@@ -141,9 +145,7 @@ def run_pipeline(
         )
         top_frames = select_top_frames(candidate_frames)
 
-        branding = load_branding_profile()
-
-        progress("Pairing titles with coherent thumbnail concepts")
+        progress("Assessing thumbnail assets and planning compositions")
         variant_package = generate_thumbnail_variants(
             transcript,
             top_frames,
@@ -153,7 +155,24 @@ def run_pipeline(
             titles=metadata.titles,
             brief=metadata.packaging_brief,
             prohibited_phrases=branding.prohibited_phrases,
+            style_intent=thumbnail_style_intent,
         )
+        (output_dir / "thumbnail_variants.json").write_text(variant_package.model_dump_json(indent=2), encoding="utf-8")
+
+        thumbnail_package = variants_to_legacy_package(variant_package)
+        thumbnails_text = render_thumbnail_ideas(thumbnail_package)
+        (output_dir / "thumbnail_ideas.txt").write_text(thumbnails_text, encoding="utf-8")
+        (output_dir / "thumbnail_ideas.json").write_text(thumbnail_package.model_dump_json(indent=2), encoding="utf-8")
+        if on_thumbnail_plan is not None:
+            on_thumbnail_plan(
+                PipelineResult(
+                    output_dir=output_dir,
+                    transcript=transcript,
+                    metadata=metadata,
+                    thumbnails=thumbnail_package,
+                    thumbnail_variants=variant_package,
+                )
+            )
 
         progress("Rendering title-thumbnail packages")
         for variant in variant_package.variants:

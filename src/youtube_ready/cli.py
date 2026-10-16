@@ -38,7 +38,14 @@ def _progress(message: str) -> None:
 )
 @click.option("--ai/--no-ai", default=True, help="Use a local model for semantic chapters and metadata.")
 @click.option("--context", default=None, help="Optional topic, audience, or channel context for the metadata.")
-@click.option("--thumbnails/--no-thumbnails", default=True, help="Extract candidate frames and propose thumbnail ideas.")
+@click.option("--thumbnails/--no-thumbnails", default=False, help="Extract candidate frames and propose thumbnail ideas.")
+@click.option(
+    "--thumbnail-style",
+    type=click.Choice(["clear", "balanced", "bold"]),
+    default="balanced",
+    show_default=True,
+    help="Thumbnail style intent: clear and informative, balanced, or bold/browse-first.",
+)
 def main(
     input_path: str,
     output_root: str,
@@ -51,6 +58,7 @@ def main(
     ai: bool,
     context: str | None,
     thumbnails: bool,
+    thumbnail_style: str,
 ) -> None:
     """Create a complete YouTube publishing package from INPUT_PATH."""
     try:
@@ -65,6 +73,7 @@ def main(
             metadata_backend=metadata_backend,
             context=context,
             thumbnails=thumbnails,
+            thumbnail_style_intent=thumbnail_style,
             on_progress=_progress,
         )
     except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
@@ -83,4 +92,3 @@ def main(
 
 if __name__ == "__main__":
     main()
-

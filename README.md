@@ -1,12 +1,12 @@
 # youtube-ready-ai
 
-Turn one local video file into a complete YouTube publishing pack — transcript, captions, chapters, title options, description, hashtags, and thumbnail ideas — with a single command or a drag-and-drop web UI.
+Turn one local video file into a complete YouTube publishing pack — transcript, captions, chapters, title options, description, and hashtags — with a single command or a drag-and-drop web UI. Thumbnail planning is available as an explicit follow-up step.
 
 ## Why this exists
 
 Publishing a video to YouTube properly means writing a transcript, captions, chapter markers, a description, a title that isn't clickbait-but-still-gets-clicked, some hashtags, and a thumbnail — every time, for every video. Doing that by hand is slow. Doing it with a cloud AI service means uploading your (possibly unpublished, possibly client) footage to someone else's servers and often paying per minute for the privilege.
 
-`youtube-ready-ai` does the whole job **on your own machine**: nothing is uploaded anywhere, there's no API key to configure and no per-minute bill. Speech-to-text runs locally via [faster-whisper](https://github.com/SYSTRAN/faster-whisper); titles, descriptions, chapters, and hashtags are drafted by a local LLM you already have running (via [Ollama](https://ollama.com/) or Apple's [MLX](https://github.com/ml-explore/mlx-lm)); thumbnail frames are picked with plain scene-detection + sharpness/face-detection heuristics, not a model at all. If you don't have a local LLM running, every step still produces a usable (if simpler) result instead of failing — see [Local AI runtimes](#local-ai-runtimes) below.
+`youtube-ready-ai` does the core job **on your own machine**: nothing is uploaded anywhere, there's no API key to configure and no per-minute bill. Speech-to-text runs locally via [faster-whisper](https://github.com/SYSTRAN/faster-whisper); titles, descriptions, chapters, and hashtags are drafted by a local LLM you already have running (via [Ollama](https://ollama.com/) or Apple's [MLX](https://github.com/ml-explore/mlx-lm)). Thumbnail frame extraction and thumbnail AI only run when you ask for thumbnail plans. If you don't have a local LLM running, every step still produces a usable (if simpler) result instead of failing — see [Local AI runtimes](#local-ai-runtimes) below.
 
 It's derived from `roughcut-ai` and works as a standalone CLI or a local web app; both leave your source video untouched.
 
@@ -15,7 +15,7 @@ It's derived from `roughcut-ai` and works as a standalone CLI or a local web app
 ```bash
 git clone <this repo> && cd youtube-ready
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,web,thumbnails]"
+pip install -e ".[dev,web,thumbnails,mlx]"
 
 youtube-ready /path/to/your/video.mp4
 ```
@@ -24,7 +24,7 @@ That's it — no accounts, no API keys. The first run downloads a small local Wh
 
 ## Output
 
-Each run creates a new timestamped folder containing:
+Each core run creates a new timestamped folder containing:
 
 - `transcript.txt` — the complete plain-text transcript
 - `transcript.json` — timestamped transcript data
@@ -34,15 +34,19 @@ Each run creates a new timestamped folder containing:
 - `description.txt` — description with hashtags and chapters appended
 - `titles.txt` — suggested titles and reasons
 - `hashtags.txt` — suggested hashtags
-- `thumbnails/` — a handful of candidate frames pulled from the video
-- `thumbnail_ideas.txt` / `.json` — 3 thumbnail concepts, each with overlay text, a visual description, a suggested frame, and an image-generation prompt
 - `youtube_metadata.json` — structured metadata and generation details
 - `youtube_package.md` — one copy/paste-friendly publishing document
+
+Thumbnail files are created only when you explicitly generate thumbnails:
+
+- `thumbnails/` — candidate frames pulled from the video
+- `thumbnail_ideas.txt` / `.json` — 3 thumbnail concepts, each with overlay text, a visual description, a suggested frame, and an image-generation prompt
+- `thumbnail_variants.json` — the editable thumbnail assistant plan and rendered variant metadata
 
 ## Requirements
 
 - Python 3.11+
-- [FFmpeg](https://ffmpeg.org/) on your `PATH` — used for media decoding and thumbnail frame extraction (`brew install ffmpeg`, `apt install ffmpeg`, or download a build for Windows)
+- [FFmpeg](https://ffmpeg.org/) on your `PATH` — used for media decoding and manual thumbnail frame extraction (`brew install ffmpeg`, `apt install ffmpeg`, or download a build for Windows)
 - Optional, for AI-written titles/chapters/hashtags instead of simpler heuristic ones: [Ollama](https://ollama.com/) plus a local model (`ollama pull qwen2.5:7b-instruct`) — see [Local AI runtimes](#local-ai-runtimes)
 
 No paid API or cloud upload is used, ever. If no local LLM is running, the command still completes using deterministic local fallbacks — see [Local AI runtimes](#local-ai-runtimes).
@@ -54,13 +58,15 @@ youtube-ready video.mp4 --quality accurate
 youtube-ready video.mp4 --language en --context "A review of a new guitar pedal"
 youtube-ready video.mp4 --metadata-model qwen2.5:7b-instruct
 youtube-ready video.mp4 --no-ai
-youtube-ready video.mp4 --no-thumbnails
+youtube-ready video.mp4 --thumbnails --thumbnail-style bold
 youtube-ready video.mp4 --output-root ./youtube-output
 ```
 
 ### Thumbnails and hashtags
 
-`youtube-ready` extracts a handful of candidate thumbnail frames — via one `ffmpeg` pass using scene-change detection, so it never dumps every frame of the video to disk — and proposes 3 thumbnail concepts (overlay text, a visual description, a suggested frame, and an image-generation prompt you can hand to a designer or an image model). Frame scoring (sharpness + face detection) uses OpenCV if installed:
+Thumbnails are a manual add-on to the transcription/metadata workflow. In the web app, open the Thumbnail tab after the publishing pack is ready and click **Generate thumbnail plans**. In the CLI, pass `--thumbnails`.
+
+When triggered, `youtube-ready` extracts a handful of candidate thumbnail frames — via one `ffmpeg` pass using scene-change detection, so it never dumps every frame of the video to disk — and proposes 3 thumbnail concepts (overlay text, a visual description, a suggested frame, and an image-generation prompt you can hand to a designer or an image model). Frame scoring (sharpness + face detection) uses OpenCV if installed:
 
 ```bash
 pip install -e ".[thumbnails]"
@@ -79,7 +85,7 @@ youtube-ready video.mp4 --metadata-backend mlx --metadata-model mlx-community/Qw
 
 The web interface queries each backend for the models you already have and lists them in a real dropdown: Ollama's locally pulled models via `ollama list`, and for MLX, whatever is in your Hugging Face cache (`~/.cache/huggingface/hub`) — download one with `huggingface-cli download <repo-id>` and it'll show up.
 
-Plain text models (Qwen2.5, Llama, etc.) load via `mlx-lm`. Vision-language architectures — Gemma 3n included — aren't supported by `mlx-lm` and need [`mlx-vlm`](https://github.com/Blaizzy/mlx-vlm) instead; the MLX backend detects this automatically and falls back to `mlx-vlm` if `mlx-lm` can't load the architecture (install it with `pip install -U mlx-vlm` if you hit that message).
+Plain text models (Qwen2.5, Llama, etc.) load via `mlx-lm`. Vision-language architectures — Gemma-style and Qwen-VL models included — use [`mlx-vlm`](https://github.com/Blaizzy/mlx-vlm). The quick-start installs both on Apple Silicon.
 
 **Recommended model:** `qwen2.5:7b-instruct` (Ollama) / `mlx-community/Qwen2.5-7B-Instruct-4bit` (MLX). Qwen2.5's instruct line follows structured-JSON instructions reliably and has a long context window for full transcripts, which matters more here than raw model size — a vision-language model (e.g. `qwen2.5vl`, or Gemma 3n) is unnecessary since only the transcript text is used, never the video itself. If you have the RAM for it, `qwen2.5:14b-instruct` (or `mlx-community/Qwen2.5-14B-Instruct-4bit`) gives noticeably better chapter/title quality.
 
@@ -100,7 +106,7 @@ The first run creates a virtual environment and installs dependencies automatica
 ### Manual start
 
 ```bash
-pip install -e ".[dev,web]"
+pip install -e ".[dev,web,thumbnails,mlx]"
 youtube-ready-web
 ```
 
@@ -113,7 +119,7 @@ youtube-ready-web --output-root ./youtube-output --no-open-browser
 
 ### Previous sessions
 
-Every run's output folder stays on disk, so the web UI lists past sessions (title, date) above the upload form for whichever output folder is currently selected. **Reopen** loads a past run straight back into the results view — transcript, captions, description, hashtags, and thumbnails included — without re-processing the video. **Delete** permanently removes that run's folder. Nothing is deleted automatically; old sessions accumulate until you clean them up.
+Every run's output folder stays on disk, so the web UI lists past sessions (title, date) above the upload form for whichever output folder is currently selected. **Reopen** loads a past run straight back into the results view — transcript, captions, description, hashtags, and any thumbnails you generated — without re-processing the video. **Delete** permanently removes that run's folder. Nothing is deleted automatically; old sessions accumulate until you clean them up.
 
 ## YouTube notes
 
@@ -126,4 +132,3 @@ You should review names, specialist terminology, and proper nouns before publish
 ```bash
 pytest
 ```
-

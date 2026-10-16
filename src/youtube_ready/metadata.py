@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from importlib.util import find_spec
 from collections.abc import Callable
 
 from pydantic import BaseModel, Field, ValidationError
@@ -13,9 +14,10 @@ MAX_SOURCE_CHARS = 48_000
 SUMMARY_CHUNK_CHARS = 18_000
 PREFERRED_TITLE_MAX = 70
 YOUTUBE_TITLE_MAX = 100
-MAX_HASHTAGS = 5
+MAX_HASHTAGS = 8
 
 _MLX_MODEL_CACHE: dict[str, tuple] = {}
+_MLX_VLM_MODEL_RE = re.compile(r"gemma|llava|bakllava|vision|vlm|qwen.*vl|moondream|minicpm", re.IGNORECASE)
 
 
 class LLMMetadata(BaseModel):
@@ -28,8 +30,19 @@ class LLMMetadata(BaseModel):
 def _call_ollama(model: str, prompt: str) -> dict:
     import ollama
 
-    response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}], format="json")
-    return json.loads(response["message"]["content"])
+    response = ollama.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        format="json",
+        # The thumbnail-variant prompt asks for three variants, each carrying a
+        # full nested assessment/composition/advice object — a large response.
+        # Ollama's per-model default num_predict can be small enough to cut
+        # that off mid-object, which then fails json.loads with a "line N
+        # column 1" error and forces the (much lower quality) heuristic
+        # fallback. Ask for enough headroom that a real request finishes.
+        options={"num_predict": 8192},
+    )
+    return json.loads(_extract_json_object(response["message"]["content"]))
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -87,7 +100,12 @@ def _load_mlx(model: str) -> tuple:
         return _MLX_MODEL_CACHE[model]
 
     errors: dict[str, str] = {}
-    for kind in ("lm", "vlm"):
+    kinds = ("vlm",) if _MLX_VLM_MODEL_RE.search(model) else ("lm",)
+    for kind in kinds:
+        package = "mlx_lm" if kind == "lm" else "mlx_vlm"
+        if find_spec(package) is None:
+            errors[kind] = f"not installed (No module named {package!r})"
+            continue
         try:
             if kind == "lm":
                 from mlx_lm import load
@@ -100,6 +118,9 @@ def _load_mlx(model: str) -> tuple:
         except ModuleNotFoundError as exc:
             errors[kind] = f"not installed ({exc})"
             continue
+        except ImportError as exc:
+            errors[kind] = str(exc)
+            break
         except Exception as exc:  # noqa: BLE001
             errors[kind] = str(exc)
             continue
@@ -107,9 +128,10 @@ def _load_mlx(model: str) -> tuple:
         return (kind, bundle)
 
     detail = "; ".join(f"{kind}: {message}" for kind, message in errors.items())
+    loader = "mlx-vlm" if kinds == ("vlm",) else "mlx-lm"
     raise RuntimeError(
-        f"could not load {model!r} with mlx-lm or mlx-vlm ({detail}). "
-        "Install both with `pip install -e '.[mlx]'` (Apple Silicon only)."
+        f"could not load {model!r} with {loader} ({detail}). "
+        "Install MLX support with `pip install -e '.[mlx]'` and run on an Apple Silicon session with Metal access."
     )
 
 
@@ -126,13 +148,13 @@ def _generate_mlx_lm(bundle: tuple, prompt: str) -> str:
     return generate(mlx_model, tokenizer, prompt=formatted, max_tokens=4096, verbose=False)
 
 
-def _generate_mlx_vlm(bundle: tuple, prompt: str) -> str:
+def _generate_mlx_vlm(bundle: tuple, prompt: str, images: list[str] | None = None) -> str:
     from mlx_vlm import generate
     from mlx_vlm.prompt_utils import apply_chat_template
 
     mlx_model, processor = bundle
-    formatted = apply_chat_template(processor, mlx_model.config, prompt, num_images=0)
-    result = generate(mlx_model, processor, formatted, max_tokens=4096, verbose=False)
+    formatted = apply_chat_template(processor, mlx_model.config, prompt, num_images=len(images or []))
+    result = generate(mlx_model, processor, formatted, image=images or None, max_tokens=4096, verbose=False)
     return result.text if hasattr(result, "text") else str(result)
 
 
@@ -263,8 +285,19 @@ def build_packaging_brief(
         return PackagingBrief(core_topic=_title_seed(transcript), primary_subjects=[_title_seed(transcript)])
 
 
-def _prompt(source: str, duration: float, context: str | None, brief: PackagingBrief | None = None) -> str:
+def _prompt(
+    source: str,
+    duration: float,
+    context: str | None,
+    brief: PackagingBrief | None = None,
+    channel_name: str | None = None,
+) -> str:
     brief_json = (brief or PackagingBrief()).model_dump_json(indent=2)
+    channel_hashtag_rule = (
+        f"\n- Include one hashtag for the channel itself, derived from this channel name: {channel_name}."
+        if channel_name and channel_name.strip()
+        else ""
+    )
     return f"""You are generating accurate YouTube publishing metadata.
 
 The transcript/source below is the factual source of truth. The packaging brief is only a structured interpretation of that source. Never invent facts, products, specifications, people, claims, recommendations, results or topics.
@@ -301,13 +334,13 @@ DESCRIPTION RULES
 - Do not invent links, specifications, claims, recommendations, sponsors or calls to action.
 
 HASHTAG RULES
-- Return 3-5 hashtags when genuinely useful; fewer strong tags are better than filler.
-- Prioritise the specific subject/entity and closely related category/topic.
-- Include a broad category tag only when it remains genuinely descriptive.
+- Return 5-8 hashtags: a mix of specific and general, never all of one kind.
+- Include one hashtag for every specific named product, brand, model, or entity actually mentioned (from the packaging brief's primary_subjects when present) - do not omit these.
+- Include 2-3 broader, general-interest tags for the video's overall category/niche (e.g. the wider genre, activity, or field this video belongs to) so viewers browsing that general topic can discover it - these should be genuinely applicable, not invented trends.
 - Do not invent trends or claim search popularity.
 - Avoid generic filler such as #YouTube, #Video, #Viral, #Trending.
 - Each must start with # and contain no spaces or punctuation besides underscores.
-- Do not repeat equivalent tags.
+- Do not repeat equivalent tags.{channel_hashtag_rule}
 
 CHAPTER HARD REQUIREMENTS
 - The first chapter must start at exactly 0 seconds.
@@ -328,6 +361,7 @@ CHAPTER TITLE STYLE
 VIDEO CONTEXT
 Video duration: {duration:.1f} seconds.
 Creator context: {context or '(none supplied)'}
+Channel name: {channel_name.strip() if channel_name and channel_name.strip() else '(none supplied)'}
 
 PACKAGING BRIEF
 {brief_json}
@@ -365,7 +399,7 @@ def _hashtag_seed(transcript: Transcript) -> list[str]:
         if len(cleaned) < 4 or cleaned in _STOPWORDS or not cleaned.isalpha():
             continue
         seen.setdefault(cleaned, None)
-    return [f"#{word.capitalize()}" for word in list(seen)[:MAX_HASHTAGS]]
+    return [f"#{word.capitalize()}" for word in list(seen)[: MAX_HASHTAGS - 1]]
 
 
 def _trim_title(title: str, max_chars: int = YOUTUBE_TITLE_MAX) -> str:
@@ -376,7 +410,9 @@ def _trim_title(title: str, max_chars: int = YOUTUBE_TITLE_MAX) -> str:
     return shortened or title[:max_chars]
 
 
-def heuristic_metadata(transcript: Transcript, reason: str | None = None) -> PublishingMetadata:
+def heuristic_metadata(
+    transcript: Transcript, reason: str | None = None, *, channel_name: str | None = None
+) -> PublishingMetadata:
     seed = _trim_title(_title_seed(transcript), PREFERRED_TITLE_MAX)
     opener = " ".join(segment.text.strip() for segment in transcript.segments[:4]).strip()
     description = opener[:600].rsplit(" ", 1)[0] if len(opener) > 600 else opener
@@ -388,7 +424,7 @@ def heuristic_metadata(transcript: Transcript, reason: str | None = None) -> Pub
     return PublishingMetadata(
         titles=titles,
         description=description or "A clear walkthrough of the topic covered in this video.",
-        hashtags=_hashtag_seed(transcript),
+        hashtags=_with_channel_hashtag(_hashtag_seed(transcript), channel_name),
         chapters=fallback_chapters(transcript),
         language=transcript.language,
         source="fallback" if reason else "heuristic",
@@ -399,7 +435,7 @@ def heuristic_metadata(transcript: Transcript, reason: str | None = None) -> Pub
 _HASHTAG_CLEAN_RE = re.compile(r"[^A-Za-z0-9_]")
 
 
-def _normalize_hashtags(raw: list[str]) -> list[str]:
+def _normalize_hashtags(raw: list[str], *, max_tags: int = MAX_HASHTAGS) -> list[str]:
     tags: list[str] = []
     seen: set[str] = set()
     for item in raw:
@@ -411,9 +447,27 @@ def _normalize_hashtags(raw: list[str]) -> list[str]:
             continue
         seen.add(key)
         tags.append(f"#{cleaned}")
-        if len(tags) == MAX_HASHTAGS:
+        if len(tags) == max_tags:
             break
     return tags
+
+
+def _channel_hashtag(channel_name: str | None) -> str | None:
+    if not channel_name or not channel_name.strip():
+        return None
+    cleaned = _HASHTAG_CLEAN_RE.sub("", channel_name.strip())
+    return f"#{cleaned}" if cleaned else None
+
+
+def _with_channel_hashtag(hashtags: list[str], channel_name: str | None) -> list[str]:
+    """Guarantee the channel's own hashtag is present, since a model may forget it
+    even when asked; trims the lowest-priority generated tag rather than the
+    channel tag if we're already at the cap."""
+    channel_tag = _channel_hashtag(channel_name)
+    if not channel_tag or channel_tag.lower() in {tag.lower() for tag in hashtags}:
+        return hashtags
+    combined = hashtags[: MAX_HASHTAGS - 1] + [channel_tag]
+    return combined
 
 
 def generate_metadata(
@@ -423,10 +477,11 @@ def generate_metadata(
     context: str | None = None,
     backend: str = "ollama",
     call: Callable[[str, str], dict] | None = None,
+    channel_name: str | None = None,
 ) -> PublishingMetadata:
     call = call or _backend_call(backend)
     if not model:
-        metadata = heuristic_metadata(transcript)
+        metadata = heuristic_metadata(transcript, channel_name=channel_name)
     else:
         try:
             source = _timed_transcript(transcript)
@@ -441,7 +496,9 @@ def generate_metadata(
                 call=call,
                 source=source,
             )
-            generated = LLMMetadata.model_validate(call(model, _prompt(source, transcript.duration, context, brief)))
+            generated = LLMMetadata.model_validate(
+                call(model, _prompt(source, transcript.duration, context, brief, channel_name))
+            )
             titles = [
                 TitleSuggestion(title=_trim_title(item.title), reason=item.reason.strip())
                 for item in generated.titles[:3]
@@ -449,7 +506,7 @@ def generate_metadata(
             ]
             if len(titles) < 2 or not generated.description.strip():
                 raise ValueError("metadata model returned too little usable content")
-            hashtags = _normalize_hashtags(generated.hashtags)
+            hashtags = _with_channel_hashtag(_normalize_hashtags(generated.hashtags), channel_name)
             metadata = PublishingMetadata(
                 titles=titles,
                 description=generated.description.strip(),
@@ -462,7 +519,9 @@ def generate_metadata(
                 packaging_brief=brief,
             )
         except (Exception, ValidationError) as exc:
-            metadata = heuristic_metadata(transcript, reason=f"Local metadata model unavailable or invalid: {exc}")
+            metadata = heuristic_metadata(
+                transcript, reason=f"Local metadata model unavailable or invalid: {exc}", channel_name=channel_name
+            )
             metadata.model = model
             metadata.backend = backend
 

@@ -68,7 +68,7 @@
               <span class="slider"></span>
               <span class="switch-label">AI chapters &amp; metadata</span>
             </label>
-            <label class="switch">
+            <label class="switch" hidden>
               <input type="checkbox" id="thumbnails" checked />
               <span class="slider"></span>
               <span class="switch-label">Thumbnail ideas</span>
@@ -86,6 +86,10 @@
             <select id="metadata-model-select">
               <option value="">Loading models&hellip;</option>
             </select>
+            <div class="ai-runtime-row">
+              <span class="hint" id="ai-runtime-status"></span>
+              <button class="ghost-btn small" id="ai-start-btn" type="button" hidden>Start AI</button>
+            </div>
           </div>
           <div class="field">
             <label for="context">Context <span class="hint">optional</span></label>
@@ -125,10 +129,30 @@
 
       <section class="panel" id="results-panel" hidden>
         <div class="results-header">
-          <h2>Publishing pack ready</h2>
+          <h2 id="results-video-title">Publishing pack ready</h2>
           <p class="results-sub" id="results-path"></p>
         </div>
-        <div class="tabs" id="tabs"></div>
+
+        <ol class="workflow-steps" id="workflow-steps" role="list" aria-label="Publishing workflow">
+          <li class="workflow-step" data-step="review" tabindex="0" role="button" aria-label="Step 1: Review content">
+            <span class="workflow-step-index" aria-hidden="true">1</span>
+            <span class="workflow-step-label">Review content</span>
+          </li>
+          <li class="workflow-step" data-step="thumbnail" tabindex="0" role="button" aria-label="Step 2: Create thumbnail">
+            <span class="workflow-step-index" aria-hidden="true">2</span>
+            <span class="workflow-step-label">Create thumbnail</span>
+          </li>
+          <li class="workflow-step" data-step="package" tabindex="0" role="button" aria-label="Step 3: Review package">
+            <span class="workflow-step-index" aria-hidden="true">3</span>
+            <span class="workflow-step-label">Review package</span>
+          </li>
+          <li class="workflow-step" data-step="export" tabindex="0" role="button" aria-label="Step 4: Export">
+            <span class="workflow-step-index" aria-hidden="true">4</span>
+            <span class="workflow-step-label">Export</span>
+          </li>
+        </ol>
+
+        <div class="tabs" id="tabs" role="tablist" aria-label="Publishing pack views"></div>
         <div class="tab-content">
           <div class="tab-toolbar">
             <button class="ghost-btn small" id="copy-btn">Copy</button>
@@ -138,8 +162,18 @@
 
           <div class="thumbnail-studio" id="thumbnail-studio" hidden>
             <div class="studio-toolbar">
-              <p class="results-sub" id="studio-provenance"></p>
-              <a class="ghost-btn small" id="studio-download-all">Download all</a>
+              <div>
+                <h3 class="studio-title">Thumbnails</h3>
+                <p class="results-sub" id="studio-provenance"></p>
+              </div>
+              <a class="ghost-btn small" id="studio-download-all">Download all 3 (.zip)</a>
+            </div>
+            <div class="studio-activity" id="studio-activity" hidden>
+              <span class="studio-activity-spinner" aria-hidden="true"></span>
+              <div class="studio-activity-body">
+                <span class="studio-activity-text" id="studio-activity-text" role="status" aria-live="polite"></span>
+                <span class="studio-activity-time" id="studio-activity-time"></span>
+              </div>
             </div>
             <div class="studio-switcher" id="studio-switcher"></div>
             <div class="studio-editor" id="studio-editor"></div>
@@ -176,6 +210,24 @@
             </div>
           </div>
         </div>
+
+        <details class="disclosure" id="files-disclosure">
+          <summary>View generated files &#9662;</summary>
+          <div class="tabs tabs-secondary" id="tabs-secondary" role="tablist" aria-label="Generated files"></div>
+        </details>
+
+        <div class="package-panel" id="package-panel">
+          <div class="package-panel-header">
+            <h3>Publishing package</h3>
+            <span class="results-sub" id="package-panel-count"></span>
+          </div>
+          <ul class="package-checklist" id="package-checklist"></ul>
+          <div class="package-panel-actions">
+            <button class="ghost-btn small" id="review-package-btn" type="button">Review package</button>
+            <button class="ghost-btn small" id="open-folder-btn" type="button">Open output folder</button>
+          </div>
+        </div>
+
         <button id="reset-btn-2" class="ghost-btn">Start another video</button>
       </section>
 

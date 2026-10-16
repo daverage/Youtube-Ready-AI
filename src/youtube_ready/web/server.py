@@ -17,18 +17,26 @@ from fastapi.staticfiles import StaticFiles
 from youtube_ready import __version__
 from youtube_ready import branding as branding_store
 from youtube_ready import dictionary as dictionary_store
+from youtube_ready.ai_runtime import ensure_ai_runtime
 from youtube_ready.metadata import list_models
 from youtube_ready.models import BrandingProfile, TranscriptSegment
 from youtube_ready.pipeline import write_transcript_outputs
 from youtube_ready.transcribe import QUALITY_PRESETS
 from youtube_ready.web.jobs import (
     JOBS,
+    continue_thumbnail_render,
     delete_session,
+    generate_thumbnail_plan_for_job,
     list_sessions,
+    find_better_take_for_variant,
     load_session,
+    recheck_thumbnail_variant,
     regenerate_thumbnail_variant,
+    remove_thumbnail_asset,
     submit_job,
+    suggest_overlay_ideas_for_variant,
     update_thumbnail_variant,
+    upload_thumbnail_asset,
     upload_thumbnail_frame,
 )
 
@@ -76,9 +84,16 @@ def models(backend: str = "ollama") -> dict:
     if backend not in ("ollama", "mlx"):
         raise HTTPException(400, f"unknown metadata backend {backend!r}")
     try:
-        return {"models": list_models(backend)}
+        return {"models": list_models(backend), "runtime": ensure_ai_runtime(backend, start=False).as_dict()}
     except Exception as exc:  # noqa: BLE001 - the backend may simply not be running/installed
-        return {"models": [], "error": str(exc)}
+        return {"models": [], "error": str(exc), "runtime": ensure_ai_runtime(backend, start=False).as_dict()}
+
+
+@app.post("/api/ai/start")
+def start_ai(backend: str = Body("ollama"), model: str | None = Body(None)) -> dict:
+    if backend not in ("ollama", "mlx"):
+        raise HTTPException(400, f"unknown metadata backend {backend!r}")
+    return ensure_ai_runtime(backend, model, start=True).as_dict()
 
 
 @app.post("/api/jobs")
@@ -92,7 +107,9 @@ async def create_job(
     metadata_model: str = Form("qwen2.5:7b-instruct"),
     metadata_backend: str = Form("ollama"),
     context: str = Form(""),
-    thumbnails: bool = Form(True),
+    thumbnails: bool = Form(False),
+    thumbnail_review: bool = Form(False),
+    thumbnail_style_intent: str = Form("balanced"),
 ) -> dict:
     if quality not in QUALITY_PRESETS:
         raise HTTPException(400, f"unknown quality {quality!r}")
@@ -108,6 +125,8 @@ async def create_job(
         metadata_backend=metadata_backend,
         context=context.strip() or None,
         thumbnails=thumbnails,
+        thumbnail_review=thumbnail_review,
+        thumbnail_style_intent=thumbnail_style_intent,
     )
     return {"job_id": job.id}
 
@@ -188,12 +207,35 @@ def job_thumbnail_frame(job_id: str, filename: str) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/api/jobs/{job_id}/activity")
+def job_activity(job_id: str) -> dict:
+    """What a long-running thumbnail-studio request for this job is doing right
+    now, polled by the frontend while that request is in flight."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    return job.activity_dict()
+
+
 @app.get("/api/jobs/{job_id}/thumbnail-variants")
 def job_thumbnail_variants(job_id: str) -> dict:
     job = JOBS.get(job_id)
     if job is None or job.result is None:
         raise HTTPException(404, "unknown job")
     return job.as_dict()["thumbnail_variants"] or {"variants": [], "frames": []}
+
+
+@app.post("/api/jobs/{job_id}/thumbnail-variants/generate")
+def generate_thumbnail_variants_route(job_id: str, payload: dict = Body(default={})) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    style_intent = str(payload.get("style_intent") or "balanced")
+    try:
+        generate_thumbnail_plan_for_job(job, style_intent=style_intent)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()
 
 
 @app.put("/api/jobs/{job_id}/thumbnail-variants/{variant_id}")
@@ -220,6 +262,30 @@ def regenerate_variant_route(job_id: str, variant_id: str) -> dict:
     return job.as_dict()["thumbnail_variants"]
 
 
+@app.post("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/recheck")
+def recheck_variant_route(job_id: str, variant_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        recheck_thumbnail_variant(job, variant_id)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()["thumbnail_variants"]
+
+
+@app.post("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/best-take")
+def best_take_route(job_id: str, variant_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        find_better_take_for_variant(job, variant_id)
+    except (ValueError, KeyError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()["thumbnail_variants"]
+
+
 @app.post("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/upload")
 async def upload_variant_frame_route(job_id: str, variant_id: str, image: UploadFile) -> dict:
     job = JOBS.get(job_id)
@@ -230,6 +296,58 @@ async def upload_variant_frame_route(job_id: str, variant_id: str, image: Upload
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return job.as_dict()["thumbnail_variants"]
+
+
+@app.post("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/overlay-ideas")
+def overlay_ideas_route(job_id: str, variant_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        suggest_overlay_ideas_for_variant(job, variant_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()["thumbnail_variants"]
+
+
+@app.delete("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/assets/{filename}")
+def remove_variant_asset_route(job_id: str, variant_id: str, filename: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        remove_thumbnail_asset(job, variant_id, Path(filename).name)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()["thumbnail_variants"]
+
+
+@app.post("/api/jobs/{job_id}/thumbnail-variants/{variant_id}/assets")
+async def upload_variant_asset_route(job_id: str, variant_id: str, image: UploadFile) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        upload_thumbnail_asset(job, variant_id, image)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()["thumbnail_variants"]
+
+
+@app.post("/api/jobs/{job_id}/thumbnail-variants/continue")
+def continue_thumbnail_render_route(job_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    try:
+        continue_thumbnail_render(job)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return job.as_dict()
 
 
 @app.get("/api/jobs/{job_id}/thumbnail-variants/download-all")

@@ -18,10 +18,23 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+NEEDS_INSTALL=0
+if ! python -c "import fastapi, uvicorn, PIL, cv2" >/dev/null 2>&1; then
+    NEEDS_INSTALL=1
+fi
+
+EXTRAS=".[web,thumbnails]"
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+    EXTRAS=".[web,thumbnails,mlx]"
+    if ! python -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('mlx_lm') and importlib.util.find_spec('mlx_vlm') else 1)" >/dev/null 2>&1; then
+        NEEDS_INSTALL=1
+    fi
+fi
+
+if [ "$NEEDS_INSTALL" -ne 0 ]; then
     echo "Installing dependencies..."
     pip install --quiet --upgrade pip
-    pip install --quiet -e ".[web]"
+    pip install --quiet -e "$EXTRAS"
 fi
 
 echo "Starting youtube-ready-ai..."
